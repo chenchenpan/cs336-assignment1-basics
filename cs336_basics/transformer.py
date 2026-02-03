@@ -169,3 +169,86 @@ def scaled_dot_product_attention(Q, K, V, mask=None):
 
     attn = softmax(scores, dim=-1)
     return attn @ V
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(
+        self, 
+        d_model: int, 
+        num_heads: int, 
+        q_proj_weight: torch.Tensor | None = None,
+        k_proj_weight: torch.Tensor | None = None,
+        v_proj_weight: torch.Tensor | None = None,
+        o_proj_weight: torch.Tensor | None = None,
+        use_rope: bool = False,
+        rope_theta: float | None = None, 
+        max_seq_len: int | None = None,
+        device: torch.device | None = None, 
+        dtype: torch.dtype | None = None
+    ):
+        """
+        Implement causal multi-head self-attention as a torch.nn.Module.
+        d_model: int Dimensionality of the Transformer block inputs.
+        num_heads: int Number of heads to use in multi-head self-attention.
+        Folllowing Vaswani et al. [2017], set d_k = d_v = d_model/h
+        """
+        super().__init__()
+        assert d_model % num_heads == 0
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+        if use_rope:
+            self.rope = RoPE(theta=rope_theta, d_k=self.d_k, max_seq_len=max_seq_len, device=device)
+        else:
+            self.rope = None
+        
+        # initialize Q, K, V, O projection weights
+        if q_proj_weight is not None:
+            self.q_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+            self.q_proj.load_state_dict({"W": q_proj_weight.T})
+        else:
+            self.q_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        if k_proj_weight is not None:
+            self.k_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+            self.k_proj.load_state_dict({"W": k_proj_weight.T})
+        else:
+            self.k_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        if v_proj_weight is not None:
+            self.v_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+            self.v_proj.load_state_dict({"W": v_proj_weight.T})
+        else:
+            self.v_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        if o_proj_weight is not None:
+            self.o_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+            self.o_proj.load_state_dict({"W": o_proj_weight.T})
+        else:
+            self.o_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        
+
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        token_positions: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        # x: (batch_size, seq_len, d_model)
+        b, s, _ = x.shape
+
+        Q = self.q_proj(x)
+        K = self.k_proj(x)
+        V = self.v_proj(x)
+
+        # change QKV from (batch_size, seq_len, d_model) to (b, h, s, d_k)
+        Q = rearrange(Q, "b s (h d) -> b h s d", h=self.num_heads)
+        K = rearrange(K, "b s (h d) -> b h s d", h=self.num_heads)
+        V = rearrange(V, "b s (h d) -> b h s d", h=self.num_heads)
+
+        # apply RoPE to Q and K
+        if self.rope is not None and token_positions is not None:
+            Q = self.rope(Q, token_positions)
+            K = self.rope(K, token_positions)
+
+        mask = torch.triu(torch.ones(s, s, device=x.device, dtype=torch.bool), diagonal=1)
+        causal_keep = ~mask
+
+        out = scaled_dot_product_attention(Q, K, V, causal_keep) # (b, h, s, d)
+        out = rearrange(out, "b h s d -> b s (h d)")
+        return self.o_proj(out)
