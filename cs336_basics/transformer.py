@@ -40,7 +40,7 @@ class Embedding(nn.Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         factory_kwargs = {"device": device, "dtype": dtype}
-        # embedding matrix of shape(vocab_size,d_model)
+        # embedding matrix of shape(vocab_size, d_model)
         self.embedding_matrix = nn.Parameter(torch.empty((num_embeddings, embedding_dim), **factory_kwargs))
         # using torch.nn.init.trunc_normal_ to initialize the matrix
         nn.init.trunc_normal_(self.embedding_matrix, mean=0.0, std=1.0, a=-3, b=3)
@@ -253,10 +253,6 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         d_ff: int,
         eps: float = 1e-5,
-        q_proj_weight: torch.Tensor | None = None,
-        k_proj_weight: torch.Tensor | None = None,
-        v_proj_weight: torch.Tensor | None = None,
-        o_proj_weight: torch.Tensor | None = None,
         use_rope: bool = False,
         rope_theta: float | None = None, 
         max_seq_len: int | None = None,
@@ -268,10 +264,6 @@ class TransformerBlock(nn.Module):
         self.attn = MultiHeadSelfAttention(
             d_model=d_model,
             num_heads=num_heads,
-            q_proj_weight=q_proj_weight,
-            k_proj_weight=k_proj_weight,
-            v_proj_weight=v_proj_weight,
-            o_proj_weight=o_proj_weight,
             use_rope=use_rope,
             rope_theta=rope_theta,
             max_seq_len=max_seq_len,
@@ -289,3 +281,63 @@ class TransformerBlock(nn.Module):
         x = x + self.attn(self.ln1(x), token_positions)
         x = x + self.ffn(self.ln2(x))
         return x
+
+
+class TransformerLM(nn.Module):
+    """
+    At minimum, this implementation should accept all the aforementioned construction parameters for the Transformerblock,
+    as well as these additional parameters:
+    vocab_size: int The size of the vocabulary, necessary for determining the dimensionality of the token embedding matrix.
+    context_length: int The maximum context length, necessary for determining the dimensionality of the position embedding matrix.
+    num_layers: int The number of Transformer blocks to use.
+    """
+    def __init__(
+        self,
+        vocab_size: int,
+        context_len: int,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        eps: float = 1e-5,
+        use_rope: bool = False,
+        rope_theta: float | None = None, 
+        max_seq_len: int | None = None,
+        device: torch.device | None = None, 
+        dtype: torch.dtype | None = None
+    ):
+        super().__init__()
+        self.tok_emb = Embedding(vocab_size, d_model, device=device, dtype=dtype)
+        self.use_rope = use_rope
+        if not use_rope:
+            self.pos_emb = nn.Parameter(torch.zeros(context_len, d_model, device=device, dtype=dtype))
+        else:
+            self.pos_emb = None
+
+        self.blocks = nn.ModuleList([
+            TransformerBlock(
+                d_model=d_model,
+                num_heads=num_heads,
+                d_ff = d_ff,
+                eps=eps,
+                use_rope=use_rope,
+                rope_theta=rope_theta,
+                max_seq_len=max_seq_len,
+                device=device,
+                dtype=dtype
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.ln_f = RMSNorm(d_model, eps=eps, device=device, dtype=dtype)
+        self.out_proj = Linear(d_model, vocab_size, device=device, dtype=dtype)
+
+    def forward(self, token_ids: torch.Tensor):
+        x = self.tok_emb(token_ids)
+        if self.pos_emb is not None:
+            x = x + self.pos_emb[:x.size(1)]
+        for block in self.blocks:
+            x = block(x)
+        x = self.ln_f(x)
+        return self.out_proj(x)
+            
