@@ -201,27 +201,17 @@ class MultiHeadSelfAttention(nn.Module):
         else:
             self.rope = None
         
+        def _init_proj(proj_weight: torch.Tensor | None) -> Linear:
+            proj = Linear(d_model, d_model, device=device, dtype=dtype)
+            if proj_weight is not None:
+                proj.load_state_dict({"W": proj_weight.T})
+            return proj
+
         # initialize Q, K, V, O projection weights
-        if q_proj_weight is not None:
-            self.q_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-            self.q_proj.load_state_dict({"W": q_proj_weight.T})
-        else:
-            self.q_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-        if k_proj_weight is not None:
-            self.k_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-            self.k_proj.load_state_dict({"W": k_proj_weight.T})
-        else:
-            self.k_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-        if v_proj_weight is not None:
-            self.v_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-            self.v_proj.load_state_dict({"W": v_proj_weight.T})
-        else:
-            self.v_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-        if o_proj_weight is not None:
-            self.o_proj = Linear(d_model, d_model, device=device, dtype=dtype)
-            self.o_proj.load_state_dict({"W": o_proj_weight.T})
-        else:
-            self.o_proj = Linear(d_model, d_model, device=device, dtype=dtype)
+        self.q_proj = _init_proj(q_proj_weight)
+        self.k_proj = _init_proj(k_proj_weight)
+        self.v_proj = _init_proj(v_proj_weight)
+        self.o_proj = _init_proj(o_proj_weight)
         
 
     def forward(
@@ -243,12 +233,59 @@ class MultiHeadSelfAttention(nn.Module):
 
         # apply RoPE to Q and K
         if self.rope is not None and token_positions is not None:
+            token_positions = token_positions.to(torch.long)
             Q = self.rope(Q, token_positions)
             K = self.rope(K, token_positions)
 
-        mask = torch.triu(torch.ones(s, s, device=x.device, dtype=torch.bool), diagonal=1)
-        causal_keep = ~mask
+        # mask = torch.triu(torch.ones(s, s, device=x.device, dtype=torch.bool), diagonal=1)
+        # causal_keep = ~mask
+        causal_keep = torch.tril(torch.ones(s, s, device=x.device, dtype=torch.bool))
 
         out = scaled_dot_product_attention(Q, K, V, causal_keep) # (b, h, s, d)
         out = rearrange(out, "b h s d -> b s (h d)")
         return self.o_proj(out)
+
+
+class TransformerBlock(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        eps: float = 1e-5,
+        q_proj_weight: torch.Tensor | None = None,
+        k_proj_weight: torch.Tensor | None = None,
+        v_proj_weight: torch.Tensor | None = None,
+        o_proj_weight: torch.Tensor | None = None,
+        use_rope: bool = False,
+        rope_theta: float | None = None, 
+        max_seq_len: int | None = None,
+        device: torch.device | None = None, 
+        dtype: torch.dtype | None = None
+    ):
+        super().__init__()
+        self.ln1 = RMSNorm(d_model, eps=eps, device=device, dtype=dtype)
+        self.attn = MultiHeadSelfAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            q_proj_weight=q_proj_weight,
+            k_proj_weight=k_proj_weight,
+            v_proj_weight=v_proj_weight,
+            o_proj_weight=o_proj_weight,
+            use_rope=use_rope,
+            rope_theta=rope_theta,
+            max_seq_len=max_seq_len,
+            device=device,
+            dtype=dtype
+        )
+        self.ln2 = RMSNorm(d_model, eps=eps, device=device, dtype=dtype)
+        self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor, token_positions=None) -> torch.Tensor:
+        # x: (batch_size, seq_len, d_model)
+        if token_positions is None:
+            b, s, _ = x.shape
+            token_positions = torch.arange(s, device=x.device).unsqueeze(0).expand(b, s)
+        x = x + self.attn(self.ln1(x), token_positions)
+        x = x + self.ffn(self.ln2(x))
+        return x
