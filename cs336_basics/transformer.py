@@ -4,6 +4,7 @@ import math
 import torch
 from torch import nn
 from einops import einsum, rearrange
+from cs336_basics.nn_utils import softmax
 
 class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
@@ -139,21 +140,6 @@ class RoPE(nn.Module):
         x2 = x[..., 1::2]
         out = torch.stack([x1*cos - x2*sin, x1*sin + x2*cos], dim=-1)
         return out.flatten(-2)
-
-
-def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
-    """
-    The function should take two parameters: 
-    x: a tensor 
-    dim: int Dimension i
-    apply softmax to the i-th dimension of the input tensor. The output tensor should have the same shape as the input tensor,
-    but its i-th dimension will have a normalized probability distribution. Use the trick of subtracting the maximum value in
-    the i-th dimension from all elements of the i-th dimension to avoid numerical stability issues.
-    """
-    x_max = x.max(dim=dim, keepdim=True).values
-    x_shifted = x - x_max
-    exp_x = torch.exp(x_shifted)
-    return exp_x / exp_x.sum(dim=dim, keepdim=True)
 
 def scaled_dot_product_attention(Q, K, V, mask=None):
     """ 
