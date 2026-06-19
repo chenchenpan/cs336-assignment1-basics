@@ -13,6 +13,15 @@ working through CS336 Assignment 1. Newest entries on top.
 
 ## Learnings & Bug-fixes
 
+### 2026-06-19 — Set up dual-tool workflow (Claude Code + GitHub Copilot CLI)
+- **Context:** Wanted to use both Claude Code and GitHub Copilot CLI on this repo.
+- **Learning:** Copilot CLI reads root `AGENTS.md` natively *and* `.github/copilot-instructions.md`
+  (both are used together), so the CS336 rules transit for free. Copilot has no memory
+  store, so durable prefs must live in an instruction file.
+- **Resolution:** Personal prefs → `.github/copilot-instructions.md` (kept out of the
+  upstream-tracked `AGENTS.md`/`CLAUDE.md` to avoid merge conflicts). Full mapping +
+  setup checklist in **[`docs/COPILOT_CLI_TRANSIT.md`](docs/COPILOT_CLI_TRANSIT.md)**.
+
 ### 2026-06-19 — FFN (SwiGLU) weight-shape convention: `(in, out)` vs `(out, in)`
 - **Context:** Merged upstream `26.0.1`, which *corrected* the docstrings for the
   SwiGLU FFN weights in `tests/adapters.py`.
