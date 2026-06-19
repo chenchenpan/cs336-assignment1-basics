@@ -1,0 +1,11 @@
+# Normalize line endings to LF on commit to avoid CRLF/LF merge noise.
+* text=auto eol=lf
+
+# Treat known binary assets as binary (never normalize).
+*.pdf binary
+*.npy binary
+*.npz binary
+*.pkl binary
+*.pickle binary
+*.pt binary
+*.pth binary
